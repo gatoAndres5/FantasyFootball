@@ -3,10 +3,8 @@ import argparse
 import random
 from collections import defaultdict
 
-# === CONFIG ===
 CSV_FILE = "2025 Rankings 2 - Rankings.csv"
 
-# === POSITION LIMITS (roster structure) ===
 MAX_POSITION_LIMITS = {
     "QB": 4,
     "RB": 8,
@@ -44,12 +42,10 @@ def load_player_pool():
         "Ovr Rank": "rank",
         "ADP": "adp"
     })
-
     df = df[~df["position"].isin(["D/ST", "K"])]
     df = df[["name", "position", "rank", "adp"]].dropna(subset=["name", "position", "rank", "adp"])
     df["rank"] = df["rank"].astype(int)
     df["adp"] = df["adp"].astype(float)
-
     ranked = df.sort_values(by="rank").to_dict("records")
     adp_sorted = df.sort_values(by="adp").to_dict("records")
     return ranked, adp_sorted
@@ -59,10 +55,8 @@ def fits_needs(roster, player, round_number, total_rounds):
     counts = defaultdict(int)
     for p in roster:
         counts[p["position"]] += 1
-
     if counts[pos] >= MAX_POSITION_LIMITS[pos]:
         return False
-
     if round_number < total_rounds - 8:
         if pos in ["RB", "WR", "TE"]:
             total_flex = counts["RB"] + counts["WR"] + counts["TE"]
@@ -77,32 +71,49 @@ def fits_needs(roster, player, round_number, total_rounds):
     else:
         bench_plan = get_bench_target()
         bench_counts = defaultdict(int)
-        for p in roster[len(roster)-8:]:
+        for p in roster[-8:]:
             bench_counts[p["position"]] += 1
         return bench_counts[pos] < bench_plan.get(pos, 8)
+
+def cpu_pick(pool, roster, round_number, total_rounds):
+    reach_chance = 0.2
+    if random.random() < reach_chance:
+        candidates = pool[:random.randint(3, 10)]
+        random.shuffle(candidates)
+    else:
+        candidates = pool
+    for player in candidates:
+        if fits_needs(roster, player, round_number, total_rounds):
+            return player
+    return None
 
 def simulate_draft(teams, rounds, your_pick):
     ranked_players, adp_players = load_player_pool()
     draft_order = list(range(teams))
     results = {team: [] for team in range(teams)}
-    your_pick = your_pick - 1
-
     for rnd in range(rounds):
         order = draft_order if rnd % 2 == 0 else list(reversed(draft_order))
         for team in order:
             pool = ranked_players if team == your_pick else adp_players
-            for i, player in enumerate(pool):
-                if fits_needs(results[team], player, rnd, rounds):
-                    results[team].append(player)
-                    ranked_players = [p for p in ranked_players if p["name"] != player["name"]]
-                    adp_players = [p for p in adp_players if p["name"] != player["name"]]
-                    break
+            if team == your_pick:
+                for player in pool:
+                    if fits_needs(results[team], player, rnd, rounds):
+                        results[team].append(player)
+                        ranked_players = [p for p in ranked_players if p["name"] != player["name"]]
+                        adp_players = [p for p in adp_players if p["name"] != player["name"]]
+                        break
+            else:
+                pick = cpu_pick(pool, results[team], rnd, rounds)
+                if pick:
+                    results[team].append(pick)
+                    ranked_players = [p for p in ranked_players if p["name"] != pick["name"]]
+                    adp_players = [p for p in adp_players if p["name"] != pick["name"]]
     return results
 
 def team_grade(roster):
     starters = sorted(roster, key=lambda p: p["rank"])[:9]
     total_rank = sum(p["rank"] for p in starters)
-    score = round(1000 / (1 + total_rank), 2)  # higher is better
+    score = round(1000 / (1 + total_rank), 2)
     return score
 
 def display_results(results, your_pick):
@@ -120,12 +131,11 @@ def main():
     parser = argparse.ArgumentParser(description="Fantasy Football Draft Simulator")
     parser.add_argument("--teams", type=int, default=10, help="Number of teams")
     parser.add_argument("--rounds", type=int, default=17, help="Total rounds including starters + 8 bench")
-    parser.add_argument("--your-pick", type=int, default=1, help="Your draft position (0-indexed)")
+    parser.add_argument("--your-pick", type=int, default=1, help="Your draft position (1-indexed)")
     args = parser.parse_args()
-    args.your_pick = args.your_pick - 1
-
-    draft = simulate_draft(args.teams, args.rounds, args.your_pick)
-    display_results(draft, args.your_pick)
+    your_pick = args.your_pick - 1
+    draft = simulate_draft(args.teams, args.rounds, your_pick)
+    display_results(draft, your_pick)
 
 if __name__ == "__main__":
     main()
